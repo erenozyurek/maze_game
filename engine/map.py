@@ -78,7 +78,14 @@ maze = maze1
 
 ROWS = len(maze)
 COLS = len(maze[0])
-CELL = 50
+
+def calculate_cell_size(screen_width, screen_height, cols, rows):
+    """Haritayı ekrana sığdıracak CELL boyutunu hesapla"""
+    cell_width = screen_width // cols
+    cell_height = screen_height // rows
+    return min(cell_width, cell_height)  # En küçüğünü al (kare hücreler için)
+
+CELL = 40  # Varsayılan
 
 def find_value(val, current_maze):
     rows = len(current_maze)

@@ -2,9 +2,17 @@ import pygame
 import sys
 import copy
 
-from engine.map import ROWS, COLS, CELL, find_value, get_map
+from engine.map import ROWS, COLS, find_value, get_map, calculate_cell_size
 from lobby import Lobby
 from game_multiplayer import MultiplayerGame
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--port", type=int, required=True)
+args = parser.parse_args()
+
+TCP_PORT = args.port
+DISCOVERY_PORT = 37020  # Discovery için sabit port - tüm oyuncular aynı portu dinler
 
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -18,8 +26,20 @@ CHEESE_COLOR = (255, 220, 0)       # 3 = peynir
 
 pygame.init()
 
-screen = pygame.display.set_mode((COLS * CELL, ROWS * CELL))
+# Global değişkenler
+SCREEN_WIDTH = 1200
+SCREEN_HEIGHT = 800
+ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT  # 1.5 (3:2 oran)
+MIN_WIDTH = 800
+MIN_HEIGHT = int(MIN_WIDTH / ASPECT_RATIO)
+is_fullscreen = False
+CELL = 40  # Başlangıç değeri, sonra hesaplanacak
+
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
 pygame.display.set_caption("Maze Game")
+
+# Dinamik CELL hesaplama
+CELL = calculate_cell_size(SCREEN_WIDTH, SCREEN_HEIGHT, COLS, ROWS)
 
 # Oyun durumları
 STATE_MENU_MODE = "menu_mode"      # 1 kişi, 2 kişi, bot seçimi
@@ -44,6 +64,7 @@ mouse_size = 0
 cheese_size = 0
 
 # Multiplayer
+player_name = f"Player_{TCP_PORT}"
 lobby_instance = None
 multiplayer_game = None
 
@@ -62,9 +83,16 @@ def draw_button(text, x, y, width, height, color, text_color=WHITE):
 def init_game():
     """Oyunu başlat"""
     global maze, mouse_row, mouse_col, move_count, game_won
-    global mouse_img, cheese_img, mouse_size, cheese_size
+    global mouse_img, cheese_img, mouse_size, cheese_size, CELL
+    global COLS, ROWS
     
     maze = get_map(selected_map)
+    
+    # Harita boyutuna göre CELL'i yeniden hesapla
+    ROWS = len(maze)
+    COLS = len(maze[0])
+    CELL = calculate_cell_size(SCREEN_WIDTH, SCREEN_HEIGHT, COLS, ROWS)
+    
     player_x, player_y = find_value(2, maze)
     mouse_row = player_y
     mouse_col = player_x
@@ -97,17 +125,72 @@ def reset_game():
 
 def on_multiplayer_start(selected_map, is_host, network_handler):
     """Multiplayer oyun başladığında çağrılır"""
-    global game_state, multiplayer_game, lobby_instance
+    global game_state, multiplayer_game
     
     multiplayer_game = MultiplayerGame(screen, selected_map, is_host, network_handler)
     game_state = STATE_GAME_MULTI
     
-    # Lobby'yi durdur ama bağlantıyı koru
+    # Lobby discovery'sini durdur ama bağlantıyı koru
     if lobby_instance:
         lobby_instance.discovery.stop()
+        lobby_instance.countdown = None
+        lobby_instance.waiting_response = False
+
+def return_to_lobby():
+    """Oyun bittiğinde lobby'ye dön"""
+    global game_state, multiplayer_game
+    
+    if multiplayer_game:
+        multiplayer_game = None
+    
+    if lobby_instance:
+        # Lobby'yi yeni oyun için sıfırla
+        lobby_instance.reset_for_new_game()
+        game_state = STATE_LOBBY
 
 # Ana oyun döngüsü
 clock = pygame.time.Clock()
+
+def handle_window_resize(width, height):
+    """Pencere boyutunu güncelle - aspect ratio korunur"""
+    global SCREEN_WIDTH, SCREEN_HEIGHT, CELL, screen, COLS, ROWS
+    
+    # En-boy oranını koruyarak yeni boyutu hesapla
+    new_width = max(MIN_WIDTH, width)
+    new_height = int(new_width / ASPECT_RATIO)
+    
+    # Eğer hesaplanan yükseklik istenen yükseklikten küçükse, yüksekliğe göre hesapla
+    if new_height < height:
+        new_height = max(MIN_HEIGHT, height)
+        new_width = int(new_height * ASPECT_RATIO)
+    
+    SCREEN_WIDTH = new_width
+    SCREEN_HEIGHT = new_height
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
+    
+    # Mevcut harita varsa CELL'i yeniden hesapla
+    if maze is not None:
+        ROWS = len(maze)
+        COLS = len(maze[0])
+    CELL = calculate_cell_size(SCREEN_WIDTH, SCREEN_HEIGHT, COLS, ROWS)
+
+def toggle_fullscreen():
+    """Tam ekran modunu değiştir"""
+    global SCREEN_WIDTH, SCREEN_HEIGHT, CELL, screen, is_fullscreen, COLS, ROWS
+    is_fullscreen = not is_fullscreen
+    if is_fullscreen:
+        screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        SCREEN_WIDTH, SCREEN_HEIGHT = screen.get_size()
+    else:
+        SCREEN_WIDTH = 1200
+        SCREEN_HEIGHT = 800
+        screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
+    
+    # Mevcut harita varsa CELL'i yeniden hesapla
+    if maze is not None:
+        ROWS = len(maze)
+        COLS = len(maze[0])
+    CELL = calculate_cell_size(SCREEN_WIDTH, SCREEN_HEIGHT, COLS, ROWS)
 
 while True:
     screen.fill(BLACK)
@@ -119,6 +202,14 @@ while True:
             pygame.quit()
             sys.exit()
         
+        # F11 ile tam ekran toggle
+        elif e.type == pygame.KEYDOWN and e.key == pygame.K_F11:
+            toggle_fullscreen()
+        
+        # Pencere yeniden boyutlandırma
+        elif e.type == pygame.VIDEORESIZE:
+            handle_window_resize(e.w, e.h)
+        
         # MOD SEÇME MENÜSÜ
         if game_state == STATE_MENU_MODE:
             if e.type == pygame.MOUSEBUTTONDOWN:
@@ -127,26 +218,39 @@ while True:
                 # Buton koordinatları
                 btn_width = 400
                 btn_height = 80
-                start_x = (COLS * CELL - btn_width) // 2
+                start_x = (SCREEN_WIDTH - btn_width) // 2
                 start_y = 200
                 spacing = 100
                 
                 btn1 = pygame.Rect(start_x, start_y, btn_width, btn_height)
                 btn2 = pygame.Rect(start_x, start_y + spacing, btn_width, btn_height)
                 btn3 = pygame.Rect(start_x, start_y + spacing * 2, btn_width, btn_height)
+                exit_btn = pygame.Rect(start_x, start_y + spacing * 3, btn_width, btn_height)
                 
                 if btn1.collidepoint(mouse_pos):
                     selected_mode = "1player"
                     game_state = STATE_MENU_MAP
                 elif btn2.collidepoint(mouse_pos):
                     selected_mode = "2player"
-                    # Lobby'ye geç
-                    lobby_instance = Lobby(screen, player_name="Player", on_game_start=on_multiplayer_start)
-                    lobby_instance.start()
+                    # Lobby'ye geç (yalnızca daha önce oluşturulmamışsa)
+                    if lobby_instance is None:
+                        lobby_instance = Lobby(
+                            screen, 
+                            player_name=player_name, 
+                            on_game_start=on_multiplayer_start,
+                            override_port=DISCOVERY_PORT,
+                            tcp_server_port=TCP_PORT
+                        )
+                        lobby_instance.start()
                     game_state = STATE_LOBBY
                 elif btn3.collidepoint(mouse_pos):
                     selected_mode = "bot"
                     game_state = STATE_MENU_MAP
+                elif exit_btn.collidepoint(mouse_pos):
+                    if lobby_instance:
+                        lobby_instance.stop()
+                    pygame.quit()
+                    sys.exit()
         
         # MAP SEÇME MENÜSÜ
         elif game_state == STATE_MENU_MAP:
@@ -155,7 +259,7 @@ while True:
                 
                 btn_width = 400
                 btn_height = 80
-                start_x = (COLS * CELL - btn_width) // 2
+                start_x = (SCREEN_WIDTH - btn_width) // 2
                 start_y = 250
                 spacing = 100
                 
@@ -164,7 +268,7 @@ while True:
                 btn3 = pygame.Rect(start_x, start_y + spacing * 2, btn_width, btn_height)
                 
                 # Geri dön butonu
-                back_btn = pygame.Rect(50, ROWS * CELL - 100, 150, 50)
+                back_btn = pygame.Rect(50, SCREEN_HEIGHT - 100, 150, 50)
                 
                 if back_btn.collidepoint(mouse_pos):
                     game_state = STATE_MENU_MODE
@@ -241,8 +345,8 @@ while True:
                 
                 btn_width = 300
                 btn_height = 80
-                btn_x = (COLS * CELL - btn_width) // 2
-                btn_y = ROWS * CELL // 2 + 100
+                btn_x = (SCREEN_WIDTH - btn_width) // 2
+                btn_y = SCREEN_HEIGHT // 2 + 100
                 
                 continue_btn = pygame.Rect(btn_x, btn_y, btn_width, btn_height)
                 
@@ -271,39 +375,41 @@ while True:
                 
                 if e.type == pygame.MOUSEBUTTONDOWN:
                     mouse_pos = pygame.mouse.get_pos()
-                    if multiplayer_game.handle_game_over_click(mouse_pos):
-                        reset_game()
+                    action = multiplayer_game.handle_game_over_click(mouse_pos)
+                    if action == "lobby":
+                        return_to_lobby()
     
     # EKRAN ÇİZİMLERİ
     if game_state == STATE_MENU_MODE:
         # Başlık
         font_title = pygame.font.Font(None, 96)
         title = font_title.render("MAZE GAME", True, WHITE)
-        title_rect = title.get_rect(center=(COLS * CELL // 2, 100))
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 100))
         screen.blit(title, title_rect)
         
         # Butonlar
         btn_width = 400
         btn_height = 80
-        start_x = (COLS * CELL - btn_width) // 2
+        start_x = (SCREEN_WIDTH - btn_width) // 2
         start_y = 200
         spacing = 100
         
         draw_button("1 Kisi", start_x, start_y, btn_width, btn_height, DARK_GRAY)
         draw_button("2 Kisi", start_x, start_y + spacing, btn_width, btn_height, DARK_GRAY)
         draw_button("Bot", start_x, start_y + spacing * 2, btn_width, btn_height, DARK_GRAY)
+        draw_button("CIKIS", start_x, start_y + spacing * 3, btn_width, btn_height, (150, 50, 50))
     
     elif game_state == STATE_MENU_MAP:
         # Başlık
         font_title = pygame.font.Font(None, 96)
         title = font_title.render("HARITA SEC", True, WHITE)
-        title_rect = title.get_rect(center=(COLS * CELL // 2, 120))
+        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, 120))
         screen.blit(title, title_rect)
         
         # Butonlar
         btn_width = 400
         btn_height = 80
-        start_x = (COLS * CELL - btn_width) // 2
+        start_x = (SCREEN_WIDTH - btn_width) // 2
         start_y = 250
         spacing = 100
         
@@ -312,11 +418,11 @@ while True:
         draw_button("Map 3", start_x, start_y + spacing * 2, btn_width, btn_height, LIGHT_BLUE)
         
         # Geri dön butonu
-        back_btn = pygame.Rect(50, ROWS * CELL - 100, 150, 50)
+        back_btn = pygame.Rect(50, SCREEN_HEIGHT - 100, 150, 50)
         pygame.draw.rect(screen, (200, 50, 50), back_btn)
         pygame.draw.rect(screen, WHITE, back_btn, 2)
         back_text = pygame.font.Font(None, 32).render("GERI DON", True, WHITE)
-        screen.blit(back_text, (70, ROWS * CELL - 88))
+        screen.blit(back_text, (70, SCREEN_HEIGHT - 88))
     
     elif game_state == STATE_LOBBY:
         # Lobby ekranı
@@ -379,22 +485,22 @@ while True:
             text2 = font.render("peyniri buldunuz!", True, WHITE)
             
             # Yarı saydam siyah arka plan
-            overlay = pygame.Surface((COLS * CELL, ROWS * CELL))
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
             overlay.set_alpha(200)
             overlay.fill((0, 0, 0))
             screen.blit(overlay, (0, 0))
             
             # Metni ortala
-            text_rect = text.get_rect(center=(COLS * CELL // 2, ROWS * CELL // 2 - 60))
-            text2_rect = text2.get_rect(center=(COLS * CELL // 2, ROWS * CELL // 2))
+            text_rect = text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 - 60))
+            text2_rect = text2.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
             screen.blit(text, text_rect)
             screen.blit(text2, text2_rect)
             
             # Devam butonu
             btn_width = 300
             btn_height = 80
-            btn_x = (COLS * CELL - btn_width) // 2
-            btn_y = ROWS * CELL // 2 + 100
+            btn_x = (SCREEN_WIDTH - btn_width) // 2
+            btn_y = SCREEN_HEIGHT // 2 + 100
             draw_button("DEVAM", btn_x, btn_y, btn_width, btn_height, LIGHT_BLUE)
 
     pygame.display.flip()

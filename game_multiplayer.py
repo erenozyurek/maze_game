@@ -84,6 +84,8 @@ class MultiplayerGame:
     
     def _handle_network_message(self, msg_type, msg_data, old_callback=None):
         """Network mesajlarını işle"""
+        print(f"[GAME] Mesaj alındı: {msg_type} - {msg_data}")
+        
         if msg_type == MessageType.PLAYER_MOVE:
             # Rakip hareketi
             if msg_data.get("player_id") != self.my_player_id:
@@ -91,8 +93,9 @@ class MultiplayerGame:
                 old_col = self.opponent_col
                 
                 # Eski pozisyonu temizle
-                if self.maze[old_row][old_col] == 4:
-                    self.maze[old_row][old_col] = 0
+                if 0 <= old_row < self.ROWS and 0 <= old_col < self.COLS:
+                    if self.maze[old_row][old_col] == 4:
+                        self.maze[old_row][old_col] = 0
                 
                 # Yeni pozisyon
                 self.opponent_row = msg_data.get("row")
@@ -103,12 +106,14 @@ class MultiplayerGame:
                     self.game_over = True
                     self.winner = 2 if self.my_player_id == 1 else 1
                     self.maze[self.opponent_row][self.opponent_col] = 4
+                    print(f"[GAME] Rakip kazandı! Winner: {self.winner}")
                 elif self.maze[self.opponent_row][self.opponent_col] == 0:
                     self.maze[self.opponent_row][self.opponent_col] = 4
         
         elif msg_type == MessageType.GAME_END:
             self.game_over = True
             self.winner = msg_data.get("winner_id")
+            print(f"[GAME] Oyun bitti! Winner: {self.winner}")
         
         # Eski callback varsa çağır
         if old_callback:
@@ -258,7 +263,7 @@ class MultiplayerGame:
         pygame.draw.rect(self.screen, (100, 150, 255), btn_rect)
         pygame.draw.rect(self.screen, (255, 255, 255), btn_rect, 3)
         
-        btn_text = self.font.render("ANA MENU", True, (255, 255, 255))
+        btn_text = self.font.render("LOBBY'YE DON", True, (255, 255, 255))
         btn_text_rect = btn_text.get_rect(center=(btn_x + btn_width // 2, btn_y + btn_height // 2))
         self.screen.blit(btn_text, btn_text_rect)
         
@@ -269,5 +274,5 @@ class MultiplayerGame:
         if self.game_over:
             btn_rect = self._draw_game_over()
             if btn_rect.collidepoint(pos):
-                return True  # Ana menüye dön
-        return False
+                return "lobby"  # Lobby'ye dön (bağlantıyı kesmeden)
+        return None

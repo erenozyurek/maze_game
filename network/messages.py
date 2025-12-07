@@ -44,11 +44,12 @@ def announce_message(player_name, tcp_port):
         "tcp_port": tcp_port
     })
 
-def invite_message(from_name, from_ip, map_id):
+def invite_message(from_name, from_ip, map_id, from_tcp_port=37021):
     return create_message(MessageType.INVITE, {
         "from": from_name,
         "from_ip": from_ip,
-        "map_id": map_id
+        "map_id": map_id,
+        "from_tcp_port": from_tcp_port
     })
 
 def invite_response_message(accepted, player_name):
