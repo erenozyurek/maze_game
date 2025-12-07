@@ -3,6 +3,7 @@ import sys
 import copy
 
 from engine.map import ROWS, COLS, find_value, get_map, calculate_cell_size
+from engine.bot import MazeBot
 from lobby import Lobby
 from game_multiplayer import MultiplayerGame
 import argparse
@@ -68,6 +69,11 @@ player_name = f"Player_{TCP_PORT}"
 lobby_instance = None
 multiplayer_game = None
 
+# Bot
+bot_instance = None
+bot_move_timer = 0
+BOT_MOVE_DELAY = 200  # milisaniye
+
 def draw_button(text, x, y, width, height, color, text_color=WHITE):
     """Buton çiz ve tıklandı mı kontrol et"""
     pygame.draw.rect(screen, color, (x, y, width, height))
@@ -84,7 +90,7 @@ def init_game():
     """Oyunu başlat"""
     global maze, mouse_row, mouse_col, move_count, game_won
     global mouse_img, cheese_img, mouse_size, cheese_size, CELL
-    global COLS, ROWS
+    global COLS, ROWS, bot_instance, bot_move_timer
     
     maze = get_map(selected_map)
     
@@ -98,6 +104,18 @@ def init_game():
     mouse_col = player_x
     move_count = 0
     game_won = False
+    bot_move_timer = 0
+    
+    # Bot modunda yolu hesapla
+    if selected_mode == "bot":
+        cheese_x, cheese_y = find_value(3, maze)
+        bot_instance = MazeBot(maze, (player_y, player_x), (cheese_y, cheese_x))
+        if bot_instance.find_path():
+            print(f"[BOT] Başlangıç: ({player_y}, {player_x})")
+            print(f"[BOT] Hedef: ({cheese_y}, {cheese_x})")
+            print(f"[BOT] Yol uzunluğu: {len(bot_instance.get_path())} adım")
+        else:
+            print("[BOT] HATA: Yol bulunamadı!")
     
     # Sprite'ları yükle
     mouse_img = pygame.image.load("assets/images/mouse.png")
@@ -110,7 +128,7 @@ def init_game():
 
 def reset_game():
     """Oyunu sıfırla"""
-    global game_state, selected_mode, selected_map, lobby_instance, multiplayer_game
+    global game_state, selected_mode, selected_map, lobby_instance, multiplayer_game, bot_instance
     
     # Lobby ve multiplayer temizle
     if lobby_instance:
@@ -118,6 +136,9 @@ def reset_game():
         lobby_instance = None
     if multiplayer_game:
         multiplayer_game = None
+    
+    # Bot temizle
+    bot_instance = None
     
     game_state = STATE_MENU_MODE
     selected_mode = None
@@ -378,6 +399,34 @@ while True:
                     action = multiplayer_game.handle_game_over_click(mouse_pos)
                     if action == "lobby":
                         return_to_lobby()
+    
+    # BOT HAREKET MANTIGI (event loop dışında - sürekli çalışır)
+    if game_state == STATE_GAME and selected_mode == "bot" and not game_won:
+        if bot_instance and not bot_instance.is_finished():
+            bot_move_timer += clock.get_time()
+            
+            if bot_move_timer >= BOT_MOVE_DELAY:
+                bot_move_timer = 0
+                next_pos = bot_instance.get_next_move()
+                
+                if next_pos:
+                    new_row, new_col = next_pos
+                    target_value = maze[new_row][new_col]
+                    
+                    # Eski pozisyonu temizle
+                    maze[mouse_row][mouse_col] = 0
+                    
+                    # Yeni pozisyona git
+                    mouse_row = new_row
+                    mouse_col = new_col
+                    maze[mouse_row][mouse_col] = 2
+                    move_count += 1
+                    
+                    # Peynire ulaştı mı?
+                    if target_value == 3:
+                        game_won = True
+                        game_state = STATE_WIN
+                        print(f"[BOT] Peynire ulaşıldı! {move_count} adımda")
     
     # EKRAN ÇİZİMLERİ
     if game_state == STATE_MENU_MODE:
